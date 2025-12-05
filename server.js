@@ -7,8 +7,6 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // 🔗 Pool de conexiones a Postgres
-// Render te da DATABASE_URL, por ejemplo:
-// postgres://user:password@host:5432/dbname
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
@@ -84,6 +82,22 @@ app.get('/api/users', async (req, res) => {
   } catch (err) {
     console.error('Error en GET /api/users:', err);
     res.status(500).json({ error: 'Error al obtener usuarios' });
+  }
+});
+
+// 🔥 Vaciar todos los usuarios
+app.delete('/api/users', async (req, res) => {
+  try {
+    // OJO: esto borra TODOS los registros de la tabla "usuarios"
+    const truncateQuery = `
+      TRUNCATE TABLE usuarios RESTART IDENTITY;
+    `;
+    await pool.query(truncateQuery);
+
+    res.json({ message: 'Tabla "usuarios" vaciada correctamente' });
+  } catch (err) {
+    console.error('Error en DELETE /api/users:', err);
+    res.status(500).json({ error: 'Error al vaciar usuarios' });
   }
 });
 
