@@ -1,48 +1,98 @@
 // server.js
 const express = require('express');
 const cors = require('cors');
-const db = require('./db');
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// 🔗 Pool de conexiones a Postgres
+// Render te da DATABASE_URL, por ejemplo:
+// postgres://user:password@host:5432/dbname
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false, // necesario en muchos PaaS (Render, etc.)
+  },
+});
+
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Crear usuario
-app.post('/api/users', (req, res) => {
-  const { nombre, dni, telefono, ticket } = req.body;
-
-  if (!nombre || !ticket) {
-    return res.status(400).json({ error: 'nombre y ticket son obligatorios' });
-  }
-
-  const sql = `
-    INSERT INTO usuarios (nombre, dni, telefono, ticket)
-    VALUES (?, ?, ?, ?)
+// Crear tabla si no existe
+async function initDB() {
+  const createTableQuery = `
+    CREATE TABLE IF NOT EXISTS usuarios (
+      id SERIAL PRIMARY KEY,
+      nombre TEXT NOT NULL,
+      dni TEXT,
+      telefono TEXT,
+      ticket TEXT NOT NULL,
+      fecha_registro TIMESTAMPTZ DEFAULT NOW()
+    );
   `;
-  db.run(sql, [nombre, dni || '', telefono || '', ticket], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
+  await pool.query(createTableQuery);
+  console.log('Tabla "usuarios" verificada/creada correctamente.');
+}
 
-    res.json({
-      id: this.lastID,
-      nombre,
-      dni: dni || '',
-      telefono: telefono || '',
-      ticket
-    });
-  });
+// Ruta simple para ver que el backend está vivo
+app.get('/', (req, res) => {
+  res.send('API Intranet BBVA con Postgres está viva ✅');
+});
+
+// Crear usuario
+app.post('/api/users', async (req, res) => {
+  try {
+    const { nombre, dni, telefono, ticket } = req.body;
+
+    if (!nombre || !ticket) {
+      return res
+        .status(400)
+        .json({ error: 'nombre y ticket son obligatorios' });
+    }
+
+    const insertQuery = `
+      INSERT INTO usuarios (nombre, dni, telefono, ticket)
+      VALUES ($1, $2, $3, $4)
+      RETURNING id, nombre, dni, telefono, ticket, fecha_registro;
+    `;
+
+    const values = [nombre, dni || null, telefono || null, ticket];
+
+    const result = await pool.query(insertQuery, values);
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error en POST /api/users:', err);
+    res.status(500).json({ error: 'Error al registrar usuario' });
+  }
 });
 
 // Listar usuarios
-app.get('/api/users', (req, res) => {
-  const sql = `SELECT * FROM usuarios ORDER BY fecha_registro DESC`;
-  db.all(sql, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
+app.get('/api/users', async (req, res) => {
+  try {
+    const selectQuery = `
+      SELECT id, nombre, dni, telefono, ticket, fecha_registro
+      FROM usuarios
+      ORDER BY fecha_registro DESC;
+    `;
+
+    const result = await pool.query(selectQuery);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error en GET /api/users:', err);
+    res.status(500).json({ error: 'Error al obtener usuarios' });
+  }
 });
 
-app.listen(PORT, () => {
-  console.log(`API Intranet BBVA escuchando en http://localhost:${PORT}`);
+// Iniciar servidor
+app.listen(PORT, async () => {
+  try {
+    await initDB();
+    console.log(`API Intranet BBVA escuchando en puerto ${PORT}`);
+  } catch (err) {
+    console.error('Error al inicializar la base de datos:', err);
+  }
 });
